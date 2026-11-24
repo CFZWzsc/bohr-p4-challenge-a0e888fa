@@ -11,6 +11,20 @@ description: Use when a research data-analysis case supplies CSV or TSV measurem
 
 不适用：统计建模与假设检验（另见统计分析 Skill）、数据库查询（另见 SQLite Skill）、图表排版。脚本**不覆盖原始文件**，不擅自填补缺失值。
 
+## Quickstart
+
+包内自带一个合成演示案例，可直接跑通：
+
+```powershell
+python scripts/run_skill.py --case examples/demo-case/case.json --out "$env:TEMP\demo_a0e888fa\result.json" --work "$env:TEMP\demo_a0e888fa\work"
+```
+
+- 演示输入：`examples/demo-case/case.json` + `examples/demo-case/input/measurements.csv`（8 行 4 列，含 1 个 `-999` 缺失标记、1 行完全重复、1 个 260.0 异常值、1 个 `2026/01/05` 混合日期格式）。
+- 输出：`$env:TEMP\demo_a0e888fa\result.json` 以及同目录 `cleaned_data.csv`；`quality_report` 记录 1 个缺失单元格、1 行重复、1 个离群列，且不改动任何数值。
+- `output_contract` 的 `data_dictionary`、`missing_summary`、`quality_report`、`cleaned_data` 四个键均非空；同一输入连续两次运行的 result.json 字节一致。
+
+> 数据为合成样本，不代表任何真实实验或官方评测数据。
+
 ## 输入
 
 - `case.json`：`case_id`、`output_contract`；可选 `data_files`、`key_columns`、`missing_tokens`、`unit_rules`。
