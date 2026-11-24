@@ -1,0 +1,11 @@
+{
+  "case_id": "demo-clean-audit-01",
+  "output_contract": {
+    "data_dictionary": "array",
+    "missing_summary": "array",
+    "quality_report": "object",
+    "cleaned_data": "string"
+  },
+  "input_dir": "input",
+  "key_columns": ["sample_id"]
+}
