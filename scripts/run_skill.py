@@ -740,6 +740,34 @@ def main(argv=None):
     if notes:
         output["contract_notes"] = notes
 
+    # --- report <-> cleaned table consistency self-check (recomputed, not asserted) ---
+    consistency = {"checked": False, "ok": None, "checks": []}
+    if tables:
+        file_rows = primary_cleaned
+        if cleaned_path:
+            try:
+                with open(Path(args.out).parent / cleaned_path, "r", encoding="utf-8", newline="") as fh:
+                    file_rows = max(0, len(list(csv.reader(fh))) - 1)
+            except OSError as exc:
+                errors.append("cannot re-read cleaned copy for consistency check: %s" % exc)
+        checks = [
+            ["cleaned_row_count_equals_file", file_rows == primary_cleaned, file_rows, primary_cleaned],
+            ["input_equals_cleaned_plus_removed", primary_rows == primary_cleaned + removed_total,
+             primary_rows, primary_cleaned + removed_total],
+            ["missing_summary_sums_to_reported_cells",
+             sum(m["missing"] for m in missing_summary) == primary_missing_cells,
+             sum(m["missing"] for m in missing_summary), primary_missing_cells],
+            ["dedup_rows_removed_not_above_input", dedup_removed <= primary_rows, dedup_removed, primary_rows],
+        ]
+        consistency = {"checked": True, "ok": all(c[1] for c in checks),
+                       "checks": [{"name": c[0], "ok": c[1], "observed": c[2], "expected": c[3]}
+                                  for c in checks]}
+        if not consistency["ok"] and status == "success":
+            status = "partial"
+            output["status"] = status
+            uncertainty.append("internal consistency self-check failed; see consistency_check")
+    output["consistency_check"] = consistency
+
     try:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -749,6 +777,64 @@ def main(argv=None):
     except OSError as exc:
         sys.stderr.write("cannot write result: %s\n" % exc)
         return 2
+
+    # --- human-readable report + provenance + replay manifest (same output dir) ---
+    try:
+        out_dir = Path(args.out).parent
+        lines = ["# Data cleaning report", "",
+                 "- case_id: `%s`" % case_id,
+                 "- status: `%s`" % status,
+                 "- rules_version: `%s`" % quality["rules_version"],
+                 "", "## Tables", "",
+                 "| file | input rows | cleaned rows | removed | columns | missing cells |",
+                 "|---|---:|---:|---:|---:|---:|"]
+        for t in tables:
+            lines.append("| %s | %d | %d | %d | %d | %d |"
+                         % (t["file"], t["rows"], t["cleaned_rows"], t["rows_removed"],
+                            t["columns"], t["missing_cells"]))
+        lines += ["", "## Missing tokens", ""]
+        if token_inventory:
+            for token, info in sorted(token_inventory.items()):
+                lines.append("- `%s`: %d cell(s) in %s" % (token or "(empty)", info["count"],
+                                                           ", ".join(info["columns"])))
+        else:
+            lines.append("- none detected")
+        lines += ["", "## Actions", ""]
+        if all_actions:
+            for act in all_actions:
+                lines.append("- `%s` on `%s` (%d row(s))" % (act.get("action"), act.get("column"),
+                                                             act.get("count") or 0))
+        else:
+            lines.append("- no value-changing action was applied")
+        lines += ["", "## Consistency", "",
+                  "- ok: `%s`" % consistency.get("ok"),
+                  "- cleaned copy: `%s`" % (cleaned_path or "not written"),
+                  "- original files are never overwritten (source_mutation: none)", ""]
+        with open(out_dir / "report.md", "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+        provenance = {"case_id": case_id, "rules_version": quality["rules_version"],
+                      "inputs": [{"file": t["file"], "sha256": t["sha256"], "encoding": t["encoding"],
+                                  "delimiter": t["delimiter"], "rows": t["rows"]} for t in tables],
+                      "outputs": [{"file": cleaned_path, "rows": primary_cleaned, "columns": cleaned_cols}]
+                      if cleaned_path else [],
+                      "parameters": {"missing_strategy": missing_strategy,
+                                     "outlier_action": outlier_action,
+                                     "key_columns": key_columns or []},
+                      "source_mutation": "none", "no_imputation_of_source_values": missing_strategy == "none"}
+        with open(out_dir / "provenance.json", "w", encoding="utf-8") as fh:
+            json.dump(provenance, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        manifest = {"command": "python scripts/run_skill.py --case <case.json> --out <out>/result.json",
+                    "python": sys.version.split()[0],
+                    "rules_version": quality["rules_version"],
+                    "input_sha256": [t["sha256"] for t in tables],
+                    "outputs": sorted(p for p in (cleaned_path, "report.md", "provenance.json") if p),
+                    "deterministic": True, "network": False}
+        with open(out_dir / "repro_manifest.json", "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        errors.append("cannot write side artifacts: %s" % exc)
     try:
         work = Path(args.work)
         work.mkdir(parents=True, exist_ok=True)
