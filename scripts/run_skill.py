@@ -597,7 +597,7 @@ def main(argv=None):
             status = "insufficient_input"
         else:
             high_missing = [m for t in tables for m in t["missing_summary"] if (m["rate"] or 0) > 0.5]
-            if skipped or high_missing:
+            if skipped or high_missing or any(t["rows"] == 0 for t in tables):
                 status = "partial"
 
     if tables and cleaned_rows_data is not None:
@@ -639,6 +639,7 @@ def main(argv=None):
         "missing_token_inventory": token_inventory,
         "date_formats_checked": list(DATE_FORMATS),
         "date_parse_failures": date_failures,
+        "empty_tables": [t["file"] for t in tables if t["rows"] == 0],
         "dedup": dict(primary_dedup, file=tables[0]["file"]) if tables and primary_dedup else
                   {"rule": "reported_only", "key_columns": [], "rows_removed": 0, "rows_kept": 0},
         "actions": all_actions,
