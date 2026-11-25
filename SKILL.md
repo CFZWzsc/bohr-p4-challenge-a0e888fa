@@ -19,15 +19,15 @@ description: Use when a research data-analysis case supplies CSV or TSV measurem
 python scripts/run_skill.py --case examples/demo-case/case.json --out "$env:TEMP\demo_a0e888fa\result.json" --work "$env:TEMP\demo_a0e888fa\work"
 ```
 
-- 演示输入：`examples/demo-case/case.json` + `examples/demo-case/input/measurements.csv`（8 行 4 列，含 1 个 `-999` 缺失标记、1 行完全重复、1 个 260.0 异常值、1 个 `2026/01/05` 混合日期格式）。
-- 输出：`$env:TEMP\demo_a0e888fa\result.json` 以及同目录 `cleaned_data.csv`；`quality_report` 记录 1 个缺失单元格、1 行重复、1 个离群列，且不改动任何数值。
+- 演示输入：`examples/demo-case/case.json` + `examples/demo-case/input/measurements.csv`（9 行 4 列，含 `-999` 与 `NA` 两个缺失标记、1 行主键重复（S06）、1 个 250.0 异常值、1 个 `not_a_date` 无效日期，以及 `2026-01-03` / `2026/01/05` 混合日期格式）。
+- 输出：`$env:TEMP\demo_a0e888fa\result.json` 以及同目录 `cleaned_data.csv`；`quality_report` 记录 2 个缺失单元格（`conversions` 逐条列出）、按 `sample_id` 去重移除 1 行（写入 8 行）、1 个离群列与 1 个日期解析失败。
 - `output_contract` 的 `data_dictionary`、`missing_summary`、`quality_report`、`cleaned_data` 四个键均非空；同一输入连续两次运行的 result.json 字节一致。
 
 > 数据为合成样本，不代表任何真实实验或官方评测数据。
 
 ## 输入
 
-- `case.json`：`case_id`、`output_contract`；可选 `data_files`、`key_columns`、`missing_tokens`、`unit_rules`。
+- `case.json`：`case_id`、`output_contract`；可选 `data_files`、`key_columns`、`missing_tokens`、`unit_rules`、`missing_strategy`、`outlier_action`。
 - 材料：`input_dir`、`materials`、`files`、`path`；回退 `/input`。
 - 输出：`/app/output/result.json` 与 `/app/output/cleaned_data.csv`（仅单表时）。
 
@@ -35,10 +35,10 @@ python scripts/run_skill.py --case examples/demo-case/case.json --out "$env:TEMP
 
 1. **字段核对（任务完成度）**：按表头读取真实列名，识别分隔符（逗号/制表符/分号）与编码（UTF-8、UTF-8-SIG、GB18030、Latin-1）；缺列时不改名列冒充对齐。
 2. **类型推断（正确性）**：逐列判断整数、浮点、日期、文本，给出成功解析比例；混合类型列明确标为 `text_with_numeric`，不强制转换。
-3. **缺失值（正确性）**：统计空串、`NA`、`N/A`、`NaN`、`None`、`null`、`-999`、`-9999` 等标记；区分「未检测」与真值 0（0 不算缺失）；不做均值填补。
-4. **异常值（正确性）**：对数值列用 IQR×1.5 规则标记，输出上下界与超界行号；只标记，不删除，避免把真实高值当错误。
-5. **重复记录（正确性）**：全字段完全相同的额外行计入重复；若任务提供 `key_columns`，额外给出主键重复组；保留全部行并标注保留依据。
-6. **单位与格式（完整性）**：从表头 `(...)`/`[...]` 提取单位；日期列检查可解析性；不擅自换算，换算须有显式 `unit_rules` 并留映射。
+3. **缺失值（正确性）**：统计空串、`NA`、`N/A`、`NaN`、`None`、`null`、`-999`、`-9999` 等标记；每个显式标记按 (列, token) 记入 `conversions`，并汇总到 `quality_report.missing_token_inventory`；0 不算缺失；默认不填补，仅当 `missing_strategy` 显式指定 `drop_rows`/`mean`/`median`/`mode` 时执行并计数。
+4. **异常值（正确性）**：对数值列用 IQR×1.5 规则标记，输出上下界与超界行号；默认只标记，`outlier_action` 设为 `remove`/`winsorize` 时才改行，均记入 `quality_report.actions`。
+5. **重复记录（正确性）**：全字段完全相同的额外行计入重复；存在 `key_columns` 时按首次出现保留并移除后续重复行，`quality_report.dedup` 记录 `rows_removed`/`rows_kept`；无可用 `key_columns` 时只报告不删除（`rule: reported_only`）。
+6. **单位与格式（完整性）**：从表头 `(...)`/`[...]` 提取单位；日期列按 `%Y-%m-%d`、`%Y/%m/%d`、`%Y.%m.%d` 与 ISO 解析，失败项记入 `quality_report.date_parse_failures` 且清洗副本保留原值；不擅自换算。
 7. **质量报告（可核验性）**：`quality_report` 的数字直接由同一份分析结构生成，与 `cleaned_data.csv` 行数、列数一致；输出输入 SHA-256 与规则版本。
 8. **失败与恢复（可靠体验）**：空表、全列缺失、编码乱码、解析失败分别记录，不把未完成写成完成。
 
@@ -47,7 +47,7 @@ python scripts/run_skill.py --case examples/demo-case/case.json --out "$env:TEMP
 | 字段 | 含义 |
 |-|-|
 | `case_id` | 与输入一致 |
-| `output_contract` 各字段 | 命中别名时填真实值，否则 `null` + `contract_notes` |
+| `output_contract` 各字段 | 命中别名或关键字规则时填真实值；仍无来源则 `null` + `contract_extras` |
 | `status` | `success` / `partial` / `insufficient_input` / `failed` |
 | `result` | `data_dictionary`、`missing_summary`、`outliers`、`duplicates`、`conversions`、`quality_report` |
 | `evidence` | 输入哈希、编码、分隔符、规则版本、清洗副本路径 |
@@ -64,15 +64,15 @@ python scripts/run_skill.py --case examples/demo-case/case.json --out "$env:TEMP
 | 编码无法识别 | 依次尝试并记录实际编码 | `success`/`partial` |
 | 列类型混合 | 标为文本，不强制转换 | `partial` |
 | 缺失率超过 50% | 报告但不填补 | `partial` |
-| 主键冲突 | 列组并保留全部行 | `success` |
+| 主键冲突 | 按 `key_columns` 保留首次出现并移除后续行 | `success` |
 | 非 CSV/TSV 文件 | `skipped` 记录不支持 | `partial` |
 
 ## 限制
 
 - 不读取 xlsx/parquet（无第三方库时不解析），会进入 `skipped`。
-- 异常值仅统计标记，不代表应剔除；是否剔除由研究者决定。
+- 异常值默认仅统计标记；仅当 `outlier_action` 显式设为 `remove`/`winsorize` 时才改动数据行。
 - 不做单位换算，除非任务显式提供 `unit_rules`；换算结果记入 `conversions`。
-- 清洗副本只做空行移除与缺失标记规范化，不填补、不插值、不截断。
+- 清洗副本只做显式缺失标记规范化、按 `key_columns` 去重及声明的 `missing_strategy`/`outlier_action`，其余值原样保留。
 
 ## 最小调用示例（示例，非官方案例结果）
 
