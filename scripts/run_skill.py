@@ -839,6 +839,19 @@ def main(argv=None):
         with open(out_dir / "provenance.json", "w", encoding="utf-8") as fh:
             json.dump(provenance, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
+        rule_lines = ["rule_index\taction\trule\tcolumn\taffected\tfile"]
+        for idx, act in enumerate(all_actions, 1):
+            affected = act.get("count")
+            if affected is None:
+                affected = act.get("rows_removed")
+            if affected is None and isinstance(act.get("rows"), list):
+                affected = len(act["rows"])
+            rule_lines.append("R%02d\t%s\t%s\t%s\t%s\t%s"
+                              % (idx, act.get("action", ""), act.get("rule", ""),
+                                 act.get("column", ""), "" if affected is None else affected,
+                                 act.get("file", "")))
+        with open(out_dir / "rules.tsv", "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(rule_lines) + "\n")
         manifest = {"command": "python scripts/run_skill.py --case <case.json> --out <out>/result.json",
                     "python": sys.version.split()[0],
                     "rules_version": quality["rules_version"],
